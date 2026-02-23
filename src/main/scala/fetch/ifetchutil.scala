@@ -4,6 +4,7 @@ import chisel3._
 import chisel3.util._
 import common._
 import _root_.circt.stage.ChiselStage
+import branch_pred.BranchPredictionTable
 
 case class iFetchParams (
                           numUops: Int = 3,
@@ -12,8 +13,10 @@ case class iFetchParams (
                           numBranchPorts: Int = 2,
                           decWidth: Int = 4,
                           resetDelay: Int = 16,
-                          wfiDelay: Int = 4
+                          wfiDelay: Int = 4,
+                          IDX_LEN:Int
                         )
+
 
 class FetchID extends Bundle {
   val value = UInt(8.W);
@@ -36,17 +39,27 @@ object RetAct extends ChiselEnum {
 }
 
 object BranchTgtSpec extends ChiselEnum {
-  val BR_TGT_NEXT, BR_TGT_COMPUTED = Value;
+  val BR_TGT_CUR32 , BR_TGT_CUR16 , BR_TGT_NEXT, BR_TGT_MANUAL, BR_TGT_COMPUTED = Value;
 }
 
 object IFetchFault extends ChiselEnum {
   val IF_FAULT_NONE, IF_INTERRUPT, IF_PAGE_FAULT, IF_ACCESS_FAULT = Value;
 }
 
+class RecoveryInfo {
+  val fetchid = new FetchID
+  val valid = Bool()
+  val retAct = RetAct
+  val histAct = HistAct
+  val fetchOffs = new FetchOff
+  val tgtSpec = BranchTgtSpec()
+}
+
 class BranchProv extends Bundle {
   val taken = Bool();
   val fetchid = new FetchID();
-  val dst = Uint(8.W);
+  val dst = UInt(8.W);
+  val dstPC = UInt(32.W);
   val histAct = HistAct();
   val retAct =  RetAct();
   val fetchoffs = new FetchOff();
@@ -55,6 +68,8 @@ class BranchProv extends Bundle {
 
 class FetchBranchProv extends Bundle {
   val taken = Bool();
+  val dst = UInt(8.W);
+  val dstpc = UInt()
   val fetchid = new FetchID();
   val histAct = HistAct();
   val retAct = RetAct();
@@ -101,6 +116,11 @@ class PredBranch extends Bundle {
   val isBranch = Bool()
   val isCall = Bool()
   val isReturn = Bool()
+  val btype = Bool()
+  val offs = new FetchOff
+  val multiple = Bool()
+  val dirOnly = Bool()
+  val valid = Bool()
 }
 
 class FetchLimit extends Bundle {
@@ -165,4 +185,19 @@ class MemController_Res extends Bundle {
   val valid = Bool()
   val rdata = UInt(32.W)
   val fault = Bool()
+}
+
+class BPBackup extends Bundle {
+  val history = UInt(16.W)        // Global History Register (GHR)
+  val rIdx = new RetStackIdx       // Return stack pointer
+  val isRegularBranch = Bool()     // Conditional branch flag
+  val predTaken = Bool()           // Predicted direction
+  val predOffs = new FetchOff      // Branch offset in fetch block
+  val pred = Bool()                // Prediction valid
+  val tageID = UInt(8.W)           // TAGE table ID used
+  val altPred = Bool()             // TAGE alternate prediction
+}
+
+class Write {
+  val addr = RegInit(
 }
