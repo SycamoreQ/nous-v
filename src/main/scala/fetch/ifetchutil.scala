@@ -2,9 +2,8 @@ package fetch
 
 import chisel3._
 import chisel3.util._
-import common._
 import _root_.circt.stage.ChiselStage
-import branch_pred.BranchPredictionTable
+import branch_pred.{BranchPredictionTable, SqN}
 
 case class iFetchParams (
                           numUops: Int = 3,
@@ -59,6 +58,8 @@ class BranchProv extends Bundle {
   val taken = Bool();
   val fetchid = new FetchID();
   val dst = UInt(8.W);
+  val flush = Bool();
+  val sqN = new SqN
   val dstPC = UInt(32.W);
   val histAct = HistAct();
   val retAct =  RetAct();
