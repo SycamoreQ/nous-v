@@ -3,6 +3,7 @@ package  branch_pred
 import chisel3._
 import chisel3.util._
 import _root_.circt.stage.ChiselStage
+import fetch.FetchOff
 
 
 // Sequence Number (SqN)
@@ -24,3 +25,16 @@ class IS_UOp extends Bundle {
   val sqN = new SqN // Sequence number (program order)
   val valid = Bool()
 }
+
+class BTBEntry {
+  val compr = Bool()
+  val valid = Bool()
+  val dst = UInt(31.W)
+  val src = UInt(`BTB_TAG_SIZE-1.W)
+  val offs = new FetchOff
+}
+
+object BranchType extends ChiselEnum {
+  val BT_CALL , BT_JUMP = Value;
+}
+

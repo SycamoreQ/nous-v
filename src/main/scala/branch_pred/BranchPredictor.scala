@@ -195,7 +195,6 @@ class BranchPredictor(NUM_IN: Int = 2) {
   recHistory := Mux(io.recovery.histAct === HIST_APPEND_1 || io.recovery.histAct === HIST_APPEND_0,
     Cat(recHistStep2(BHist_t_LEN-2, 0), io.recovery.histAct === HIST_APPEND_1), recHistStep2)
 
-  // --- 3. Return Stack Index Recovery (recRIdx) ---
   val recRIdx = Wire(new RetStackIdx)
   recRIdx := BP_FileRData.rIdx
   switch(io.recovery.retAct) {
@@ -203,7 +202,6 @@ class BranchPredictor(NUM_IN: Int = 2) {
     is(RetAct.RET_PUSH) { recRIdx := BP_FileRData.rIdx + 1.U }
   }
 
-  // --- 4. Global History Updates ---
   val lookupHistory = Wire(UInt(BHist_t_LEN.W))
   lookupHistory := history // Default
 
@@ -269,7 +267,6 @@ class BranchPredictor(NUM_IN: Int = 2) {
     io.pcFileRead.valid := true.B
   }
 
-  // --- 8. Main State Registers (The Final FF Block) ---
   val pcReg      = RegInit((ENTRY_POINT >> 1).U(31.W))
   val pcRegNoInc = Reg(UInt(31.W))
   val history    = RegInit(0.U(BHist_t_LEN.W))
@@ -279,7 +276,6 @@ class BranchPredictor(NUM_IN: Int = 2) {
   recovery.valid := false.B // Pulse-like behavior
 
   when(io.pcValid) {
-    // Equivalent to {$bits(FetchOff_t)'(1'b0)}
     val fetchOffsBits = (new FetchOff).getWidth
     pcReg := Cat(io.pc(30, fetchOffsBits) + 1.U, 0.U(fetchOffsBits.W))
     pcRegNoInc := io.pc
