@@ -4,6 +4,7 @@ import chisel3._
 import chisel3.util._
 import _root_.circt.stage.ChiselStage
 import branch_pred.{BranchPredictionTable, SqN}
+import branch_pred.BranchType
 
 case class iFetchParams (
                           numUops: Int = 3,
@@ -88,9 +89,15 @@ class DecoderBranch extends Bundle {
 
 class BTUpdate extends Bundle {
   val valid = Bool()
+  val btype = BranchType
   val pc = UInt(32.W)
+  val source = UInt(32.W)
   val target = UInt(32.W)
   val taken = Bool()
+  val compr = Bool()
+  val clean = Bool()
+  val multiple = Bool()
+  val multipleOffs = new FetchOff
   val isBranch = Bool()
   val isCall = Bool()
   val isReturn = Bool()
@@ -113,6 +120,7 @@ class ReturnDecUpdate extends Bundle {
 class PredBranch extends Bundle {
   val taken = Bool()
   val target = UInt(31.W)
+  val compr = Bool()
   val shouldFlush = Bool()
   val isBranch = Bool()
   val isCall = Bool()
