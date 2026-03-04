@@ -14,7 +14,15 @@ case class iFetchParams (
                           decWidth: Int = 4,
                           resetDelay: Int = 16,
                           wfiDelay: Int = 4,
-                          IDX_LEN:Int
+                          IDX_LEN:Int,
+                          NUM_RQ    : Int     = 1,
+                          SIZE      : Int     = 8,
+                          ASSOC     : Int     = 4,
+                          IS_IFETCH : Boolean = false,
+                          dramBase  : Long = 0x00000000L,
+                          dramSize  : Long = 0x00010000L,
+                          mmioBase  : Long = 0x10000000L,
+                          mmioSize  : Long = 0x00001000L
                         )
 
 
@@ -91,6 +99,7 @@ class FetchBranchProv extends Bundle {
 }
 
 class DecoderBranch extends Bundle {
+  val target = UInt(32.W)
   val taken = Bool();
   val fetchid = new FetchID();
   val fetchoff = new FetchOff;
@@ -115,6 +124,7 @@ class BTUpdate extends Bundle {
 }
 
 class BPUpdate extends Bundle {
+  val target = UInt(32.W)
   val valid = Bool()
   val fetchID = new FetchID
   val taken = Bool()
@@ -122,6 +132,7 @@ class BPUpdate extends Bundle {
 }
 
 class ReturnDecUpdate extends Bundle {
+  val target = UInt(32.W)
   val valid = Bool()
   val fetchID = new FetchID
   val offset = new FetchOff
@@ -130,7 +141,8 @@ class ReturnDecUpdate extends Bundle {
 
 class PredBranch extends Bundle {
   val taken = Bool()
-  val target = UInt(31.W)
+  val source = UInt(32.W)
+  val target = UInt(32.W)
   val compr = Bool()
   val shouldFlush = Bool()
   val isBranch = Bool()
@@ -219,10 +231,12 @@ class BPBackup extends Bundle {
 }
 
 class IFetchOp extends Bundle  {
+  val valid = Bool()
    val fetchid = new FetchID
    val pc = UInt(32.W)
    val predBr = new PredBranch
    val rIdx = new RetStackIdx( )
    val lastValid  = new FetchOff()
    val predRetAddr = UInt(32.W)
+   val fetchFault = new IFetchFault()
 }

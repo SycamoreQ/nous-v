@@ -94,3 +94,27 @@ class ReturnDecUpdate extends Bundle {
 object BH_BranchType extends ChiselEnum {
   val JUMP, IJUMP, CALL, ICALL, BRANCH, PAD0, PAD1, RETURN = Value
 }
+
+class LoopPredictorIndices extends Bundle {
+  val bank = Vec(4, UInt(8.W))  // 4 banks for set-associative lookup
+}
+
+class LoopPredictorEntry extends Bundle {
+  val totalIterations = UInt(10.W)
+  val tag = UInt(10.W)
+  val confidence = UInt(4.W)
+  val age = UInt(4.W)
+  val dir = Bool()
+  val speculativeCurrentIter = UInt(10.W)
+  val currentIter = UInt(10.W)
+}
+
+class LoopPredictionInfo extends Bundle {
+  val hitBank = SInt(3.W)  // -1 for no hit, 0-3 for bank index
+  val valid = Bool()
+  val prediction = Bool()
+  val indices = new LoopPredictorIndices
+  val tag = UInt(10.W)
+  val currentIterCheckpoint = UInt(10.W)
+}
+

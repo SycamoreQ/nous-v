@@ -5,7 +5,7 @@ import chisel3.util._
 import _root_.circt.stage.ChiselStage
 import fetch.{BTUpdate, FetchOff, PredBranch}
 import branch_pred._
-import branch_pred.TageTable._
+import branch_pred.TageTable
 
 class TagePredictor(NUM_STAGES:Int = TAGE_STAGES,
                     FACTOR: Int = 2 , BASE:Int = BASE ,
