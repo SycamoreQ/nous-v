@@ -47,7 +47,7 @@ class TLB(
   NUM_RQ    : Int     = 1,
   SIZE      : Int     = 8,
   ASSOC     : Int     = 4,
-  IS_IFETCH : Boolean = false
+  IS_IFETCH : Boolean = true // only accepts page walk results with rqID == 0
 ) extends Module {
 
   val LEN      = SIZE / ASSOC

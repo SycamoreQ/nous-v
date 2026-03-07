@@ -9,6 +9,8 @@ import chisel3._
 import chisel3.util._
 import branch_pred._
 import branch_pred.BranchType._
+import cache.ICache
+
 
 class IFetchPipeline(params: iFetchParams) extends Module {
 
@@ -20,6 +22,7 @@ class IFetchPipeline(params: iFetchParams) extends Module {
   val CASSOC       = params.CASSOC
   val ITLB_SIZE    = params.ITLB_SIZE
   val ITLB_ASSOC   = params.ITLB_ASSOC
+  val LINES        = 1 << (params.CACHE_SIZE_E - log2Ceil(params.CASSOC) - 2)
 
   val io = IO(new Bundle {
     val MEM_busy          = Input(Bool())
@@ -50,14 +53,6 @@ class IFetchPipeline(params: iFetchParams) extends Module {
 
     val lateRetAddr       = Input(UInt(31.W))
 
-    val icacheRe          = Output(Bool())
-    val icacheRaddr       = Output(UInt(VIRT_IDX_LEN.W))
-    val icacheRdata       = Input(Vec(CASSOC, Vec(NUM_INST, UInt(16.W))))
-    val icacheBusy        = Input(Bool())
-    val icache_fetchID      = Output(new FetchID)
-    val icache_flush        = Output(Bool())
-    val icache_flushFetchID = Output(new FetchID)
-
     val ictRe             = Output(Bool())
     val ictRaddr          = Output(UInt(VIRT_IDX_LEN.W))
     val ictRdata          = Input(Vec(CASSOC, new ICTEntry))
@@ -80,6 +75,12 @@ class IFetchPipeline(params: iFetchParams) extends Module {
     val memc              = Output(new MemController_Req)
     val memcRes           = Input(new MemController_Res)
   })
+
+  val icache = Module(new ICache(
+    BSIZE    = 4,
+    LINES    = LINES,
+    MEM_SIZE = 1 << params.CACHE_SIZE_E
+  ))
 
   //  Pipeline registers
   //  fetch0: after ICache read issued (1st cycle)
@@ -109,7 +110,7 @@ class IFetchPipeline(params: iFetchParams) extends Module {
   val sFlushActive   = 2.U(2.W)
   val sFlushFinalize = 3.U(2.W)
 
-  val flushState     = RegInit(sFlushQueued)   // start flushing on reset
+  val flushState     = RegInit(sFlushIdle)
   val flushAssocIter = RegInit(0.U(log2Ceil(CASSOC).W))
   val flushAddrIter  = RegInit(0.U((CACHE_SIZE_E - CLSIZE_E - log2Ceil(CASSOC)).W))
 
@@ -125,13 +126,13 @@ class IFetchPipeline(params: iFetchParams) extends Module {
   ))
 
   tlb.io.clear        := io.clearICache || io.flushTLB
-  tlb.io.pw           := io.pwRes
+  tlb.io.pw           := io.pwRes.asTypeOf(new PageWalk_Res_Full)
   tlb.io.rqs(0).valid := fetch0.valid
   tlb.io.rqs(0).vpn   := fetch0.pc(31, 12)
 
-  val tlbMiss  = Wire(Bool())
+  val tlbMiss   = Wire(Bool())
   val pageFault = Wire(Bool())
-  val phyPC    = Wire(UInt(32.W))
+  val phyPC     = Wire(UInt(32.W))
 
   tlbMiss   := false.B
   pageFault := false.B
@@ -142,10 +143,6 @@ class IFetchPipeline(params: iFetchParams) extends Module {
 
   val isLegalAddr = inRange(phyPC, params.dramBase, params.dramSize)
   val isMmioAddr  = inRange(phyPC, params.mmioBase, params.mmioSize)
-
-  tlbMiss   := false.B
-  pageFault := false.B
-  phyPC     := fetch1.pc
 
   val tlbRes = tlb.io.res(0)
 
@@ -168,17 +165,29 @@ class IFetchPipeline(params: iFetchParams) extends Module {
     }
   }
 
+  //  ICache wiring
+  icache.io.core_addr            := phyPC
+  icache.io.icache_fetchID       := fetch1.fetchid
+  icache.io.flushDone                := io.clearICache
+  icache.io.flushDone         := io.mispr
+  icache.io.flushFetchID  := io.misprFetchID
+  icache.io.va_lineIdx           := fetch0.pc(CLSIZE_E + log2Ceil(LINES) - 1, CLSIZE_E)
+  icache.io.ram_ready            := io.memcRes.ready
+  icache.io.ram_din              := io.memcRes.data
+  icache.io.ram_snoop_addr       := 0.U
+  icache.io.ram_snoop_invalidate := false.B
+
   //  Tag check across all ways
   val assocHitUnary = VecInit((0 until CASSOC).map { i =>
     io.ictRdata(i).valid &&
     io.ictRdata(i).addr === phyPC(31, VIRT_IDX_LEN)
   })
 
-  val hitWayValid = assocHitUnary.asUInt.orR
-  val hitWay      = PriorityEncoder(assocHitUnary)
-  val assocHitInstrs = io.icacheRdata(hitWay)
+  val hitWayValid    = assocHitUnary.asUInt.orR
+  val hitWay         = PriorityEncoder(assocHitUnary)
+  val assocHitInstrs = icache.io.core_dout
 
-  bh.io.instrs := assocHitInstrs
+  bh.io.instrs := DontCare      // driven from assocHitInstrs by InstrAligner
 
   //  Stall logic
   val fetchLimit = Mux(
@@ -195,50 +204,50 @@ class IFetchPipeline(params: iFetchParams) extends Module {
   when(io.pwRes.valid)                                        { io.stall := true.B }
   when(FIFO_free < 2.U)                                       { io.stall := true.B }
   when(flushState =/= sFlushIdle)                             { io.stall := true.B }
-  when(io.icacheBusy)                                         { io.stall := true.B }
+  when(!icache.io.core_valid && !icache.io.fillHit && fetch1.valid && !tlbMiss)     { io.stall := true.B }
 
   //  ICache / ICT read (cycle 0)
-  io.icacheRe    := false.B
-  io.icacheRaddr := DontCare
   io.ictRe       := false.B
   io.ictRaddr    := DontCare
 
   when(io.ifetchOp.valid && !io.stall) {
-    io.icacheRe    := true.B
-    io.icacheRaddr := io.ifetchOp.pc(VIRT_IDX_LEN - 1, 0)
-    io.ictRe       := true.B
-    io.ictRaddr    := io.ifetchOp.pc(VIRT_IDX_LEN - 1, 0)
+    io.ictRe    := true.B
+    io.ictRaddr := io.ifetchOp.pc(VIRT_IDX_LEN - 1, 0)
   }
-
 
   //  Cache hit / miss classification (cycle 1, combinational) and also send the fetchid along with the request
   val cacheHit    = Wire(Bool())
   val cacheMiss   = Wire(Bool())
   val doCacheLoad = Wire(Bool())
+  val cacheData = Wire(UInt(32.W))
 
   cacheHit    := false.B
   cacheMiss   := false.B
   doCacheLoad := true.B
 
   when(fetch1.valid && !tlbMiss && fetch1.fetchFault === IFetchFault.IF_FAULT_NONE) {
-    when(hitWayValid) {
-      cacheHit    := true.B
-      doCacheLoad := false.B
-    }
-    cacheMiss := !cacheHit
+    cacheHit    := icache.io.core_valid || icache.io.fillHit
+    cacheData := Mux(icache.io.fillHit, icache.io.fillData, icache.io.core_dout)
+    doCacheLoad := !icache.io.core_valid
+    cacheMiss   := !icache.io.core_valid
   }
 
   // flushing cache ports . We need to expose them in order to wire it to the Icache itself
-  io.icache_flush         := io.mispr
-  io.icache_flushFetchID  := io.misprFetchID
-  io.icache_fetchID       := fetch1.fetchid
+  io.memc       := 0.U.asTypeOf(new MemController_Req)
+  io.memc.valid := false.B
+  io.memc.addr  := icache.io.ram_addr
+  io.memc.valid := icache.io.ram_valid
+  io.memc.we    := icache.io.ram_we
+  io.memc.burst := icache.io.ram_burst
+  io.memc.wdata := DontCare
+  io.memc.size  := 2.U
 
   //  Build fetch packet (IF_Instr equivalent)
   //  We use PD_Instr directly here; adapt if you have a
   //  separate IF_Instr bundle before InstrAligner.
-  val packetValid     = Wire(Bool())
+  val packetValid      = Wire(Bool())
   val packetFetchFault = Wire(IFetchFault())
-  val packetFetchID   = Wire(new FetchID)
+  val packetFetchID    = Wire(new FetchID)
   val packetFirstValid = Wire(new FetchOff)
   val packetLastValid  = Wire(new FetchOff)
   val packetPredTaken  = Wire(Bool())
@@ -255,15 +264,31 @@ class IFetchPipeline(params: iFetchParams) extends Module {
   packetPredPos    := fetch1.predBr.offs
 
   when(fetch1.valid) {
-    when(pageFault) {
-      packetFetchFault := IFetchFault.IF_PAGE_FAULT
+    //The priority is intentional. An interrupt takes precedence because even if the fetch address is bad, the interrupt handler needs to run
+      //first and it will re-execute the faulting instruction.
+    //The ICache fault comes before TLB faults because if the physical address is misaligned there is no point checking TLB permissions — the access was never valid.
+      //PMA comes last because it needs phyPC which is only valid after TLB translation.
+
+    // ICache access fault (misalignment, bad physical address)
+    when(icache.io.core_fault =/= IFetchFault.IF_FAULT_NONE) {
+      packetFetchFault := icache.io.core_fault
     }
-    // These define what is legal executable memory and what is MMIO. Anything outside dramBase to
-    // dramBase + dramSize is illegal. Anything inside the MMIO range is non-executable.
+
+    // TLB page fault or access fault
+    when(fetch1.valid && io.vmem.enabled && tlbRes.hit) {
+      when(tlbRes.pageFault || tlbRes.accessFault || !tlbRes.rwx(0)) {
+        packetFetchFault := IFetchFault.IF_PAGE_FAULT
+      }
+    }
+
     when(!tlbMiss && packetFetchFault === IFetchFault.IF_FAULT_NONE) {
       when(!isLegalAddr || isMmioAddr) {
         packetFetchFault := IFetchFault.IF_ACCESS_FAULT
       }
+    }
+
+    when(io.ifetchOp.fetchFault =/= IFetchFault.IF_FAULT_NONE) {
+      packetFetchFault := io.ifetchOp.fetchFault
     }
 
     when(packetFetchFault =/= IFetchFault.IF_FAULT_NONE) {
@@ -301,7 +326,7 @@ class IFetchPipeline(params: iFetchParams) extends Module {
     }
     when(BH_decBranch.taken) {
       rePredPredTarget := BH_decBranch.target
-      rePredPredPos := BH_newPredPos
+      rePredPredPos    := BH_newPredPos
       rePredPredTaken  := BH_newPredTaken
     }
   }
@@ -313,9 +338,9 @@ class IFetchPipeline(params: iFetchParams) extends Module {
   //  pipeline flushes and retries the same fetchID.
   io.fetchBranch := BH_decBranch
   when(cacheMiss || tlbMiss) {
-    io.fetchBranch.taken       := true.B
-    io.fetchBranch.fetchid    := fetch1.fetchid
-    io.fetchBranch.fetchoffs  := fetch1.pc(params.FSIZE_E - 1, 1).asTypeOf(new FetchOff)
+    io.fetchBranch.taken         := true.B
+    io.fetchBranch.fetchid       := fetch1.fetchid
+    io.fetchBranch.fetchoffs     := fetch1.pc(params.FSIZE_E - 1, 1).asTypeOf(new FetchOff)
     io.fetchBranch.isFetchBranch := true.B
   }
 
@@ -340,10 +365,10 @@ class IFetchPipeline(params: iFetchParams) extends Module {
   io.bpFileAddr := fetchID
 
   //  ICT / flush write port
-  io.ictWe    := false.B
-  io.ictWaddr := DontCare
+  io.ictWe     := false.B
+  io.ictWaddr  := DontCare
   io.ictWassoc := DontCare
-  io.ictWdata := 0.U.asTypeOf(new ICTEntry)
+  io.ictWdata  := 0.U.asTypeOf(new ICTEntry)
 
   when(flushState === sFlushActive) {
     io.ictWe             := true.B
@@ -363,11 +388,9 @@ class IFetchPipeline(params: iFetchParams) extends Module {
   val handlingMiss = Wire(Bool())
   handlingMiss := false.B
 
-  io.memc       := 0.U.asTypeOf(new MemController_Req)
-  io.memc.valid := false.B
-
-  when(io.memc.valid && io.memcRes.fault) {
-    io.memc := RegNext(io.memc)
+  when(io.memcRes.fault) {
+    io.memc.valid := RegNext(io.memc.valid)
+    io.memc.addr  := RegNext(io.memc.addr)
   }.elsewhen(cacheMiss && doCacheLoad) {
     io.memc.valid := true.B
     io.memc.addr  := Cat(phyPC(31, CLSIZE_E), 0.U(CLSIZE_E.W))
@@ -381,13 +404,11 @@ class IFetchPipeline(params: iFetchParams) extends Module {
   val pw_r = RegInit(0.U.asTypeOf(new PageWalk_Req))
   io.pw := pw_r
 
-  when(io.pw.valid && io.pwRes.valid) {
-    pw_r := io.pw
-  }.elsewhen(tlbMiss) {
+  when(tlbMiss && !pw_r.valid) {
     pw_r.valid := true.B
     pw_r.addr  := fetch1.pc
     pw_r.write := false.B
-  }.otherwise {
+  }.elsewhen(io.pwRes.valid) {
     pw_r.valid := false.B
   }
 
@@ -427,13 +448,13 @@ class IFetchPipeline(params: iFetchParams) extends Module {
         fetch0 := io.ifetchOp
       }
       when(fetch0.valid) {
-        fetch1                := fetch0
-        fetch1.fetchid        := fetchID
-        fetch1.lastValid      := io.lastValid
-        fetch1.predBr         := io.predBranch
-        fetch1.predRetAddr    := io.lateRetAddr
-        fetch1.rIdx           := io.rIdx
-        fetchID.value         := fetchID.value + 1.U
+        fetch1             := fetch0
+        fetch1.fetchid     := fetchID
+        fetch1.lastValid   := io.lastValid
+        fetch1.predBr      := io.predBranch
+        fetch1.predRetAddr := io.lateRetAddr
+        fetch1.rIdx        := io.rIdx
+        fetchID.value      := fetchID.value + 1.U
       }
     }
     when(handlingMiss) {
@@ -469,7 +490,7 @@ class IFetchPipeline(params: iFetchParams) extends Module {
       }
     }
     is(sFlushFinalize) {
-      when(!io.MEM_busy) { flushState := sFlushIdle }
+      when(!io.MEM_busy && icache.io.flushDone) { flushState := sFlushIdle }
     }
   }
 }
