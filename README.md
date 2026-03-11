@@ -2,12 +2,9 @@ Quasar is a RISC-V based Neural Processing Unit in Chisel.
 
 Currently working on the Branch Prediction for the host CPU.
 TODO: 
-- Finish the Branch Predictor then the TAGE based stuff and finally wire it to the 
-  iFetch module 
+- Write the MemController and then the Dcache.
 
-- Build the ICache and DCache which are part of the L1 cache layer. 
-
-- A more farther goal is to integrate AXI system bus inspired and used in the Coral NPU
+Look into this paper for FlashAttn : https://www.together.ai/blog/flashattention-4
 
 CURRENT: Writing testbenches in Verilator for the branch prediction and fetching mechanism. 
 This is to validate their working before I work on the advancements of the ICache.
@@ -60,7 +57,7 @@ avoid re-requesting lines already present or already queued. The prefetch queue 
 
 
 
-Instr Aligner advancements 
+Instr Aligner advancements ---- DONE
 
 Difference 1 — Window-based vs drain-pointer approach
 The SV uses a sliding window of BUF_SIZE + 1 fetch cycles with a PriorityEncoder selecting the next NUM_INSTRS instruction starts simultaneously. Your Chisel version uses a single-packet buffer with a linear drainPtr walking forward one slot at a time. 

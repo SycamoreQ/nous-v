@@ -69,8 +69,8 @@ class IFetchPipeline(params: iFetchParams) extends Module {
     val flushTLB          = Input(Bool())
     val vmem              = Input(new VirtMemState)
 
-    val pw                = Output(new PageWalk_Req)
-    val pwRes             = Input(new PageWalk_Res)
+    val pw                = Output(new PageReq)
+    val pwRes             = Input(new PageWalk_Res_Full)
 
     val memc              = Output(new MemController_Req)
     val memcRes           = Input(new MemController_Res)
@@ -401,12 +401,11 @@ class IFetchPipeline(params: iFetchParams) extends Module {
   }
 
   //  Page walk request
-  val pw_r = RegInit(0.U.asTypeOf(new PageWalk_Req))
+  val pw_r = RegInit(0.U.asTypeOf(new PageReq))
   io.pw := pw_r
 
   when(tlbMiss && !pw_r.valid) {
     pw_r.valid := true.B
-    pw_r.addr  := fetch1.pc
     pw_r.write := false.B
   }.elsewhen(io.pwRes.valid) {
     pw_r.valid := false.B

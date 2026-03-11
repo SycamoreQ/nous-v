@@ -18,18 +18,6 @@ class TLB_Res extends Bundle {
   val accessFault = Bool()
 }
 
-class PageWalk_Res_Full extends Bundle {
-  val valid       = Bool()
-  val busy        = Bool()
-  val rqID        = UInt(2.W)
-  val vpn         = UInt(20.W)
-  val ppn         = UInt(22.W)
-  val rwx         = UInt(3.W)
-  val user        = Bool()
-  val globl       = Bool()
-  val isSuperPage = Bool()
-  val pageFault   = Bool()
-}
 
 class TLBEntry(VIRT_LEN: Int) extends Bundle {
   val vpn         = UInt(VIRT_LEN.W)

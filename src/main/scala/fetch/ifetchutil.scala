@@ -194,17 +194,6 @@ class VirtMemState extends Bundle {
   val ppn = UInt(22.W)
 }
 
-class PageWalk_Req extends Bundle {
-  val valid = Bool()
-  val addr = UInt(32.W)
-  val write = Bool()
-}
-
-class PageWalk_Res extends Bundle {
-  val valid = Bool()
-  val pte = UInt(32.W)
-  val fault = Bool()
-}
 
 class MemController_Req extends Bundle {
   val valid = Bool()

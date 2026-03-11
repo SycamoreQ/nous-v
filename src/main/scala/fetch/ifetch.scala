@@ -30,10 +30,10 @@ class iFetch(params: iFetchParams) extends Module {
     val ready            = Input(Bool())
     val instrs           = Output(Vec(params.decWidth, new PD_Instr))
     val vmem             = Input(new VirtMemState)
-    val pw               = Output(new PageWalk_Req)
-    val pwRes            = Input(new PageWalk_Res)
     val memc             = Output(new MemController_Req)
     val memcRes          = Input(new MemController_Res)
+    val satp             = Input(new SATP)
+    val clearPTE         = Input(Bool())
   })
 
   // ---- Reset delay and WFI gate ----------------------------------
@@ -174,6 +174,26 @@ class iFetch(params: iFetchParams) extends Module {
   io.instrs      := ifp.io.instrs
   io.pw          := ifp.io.pw
   io.memc        := ifp.io.memc
+
+  val page_walker = Module(new PageWalker(NUM_RQ = 1))
+
+  page_walker.io.in_pwReq(0) := ifp.io.pw
+
+  // Walker receives satp from CSR input
+  page_walker.io.satp        := io.satp
+
+  // Walker receives clear signal
+  page_walker.io.clear       := io.clearPTE
+
+  // IFetchPipeline receives walk result from walker
+  ifp.io.pwRes               := page_walker.io.out_pwRes(0)
+
+  // Walker receives memory responses from outside
+  page_walker.io.memc_res    := io.memcRes
+
+  // Walker's memory requests go out — but needs arbitration with ICache
+  // For now wire directly, add arbiter when MemController is implemented
+  io.memc                    := page_walker.io.memc_req
 
   // ---- PC file ---------------------------------------------------
   // A synchronous register file that maps fetchID → PCFileEntry.
