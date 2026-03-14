@@ -22,7 +22,6 @@ class AXI4_AR (params: AXIParams) extends Bundle{
   val arlock   = UInt(1.W)            //exclusive access flag, always 0 for you
   val arcache = UInt(4.W)            //cache hints, use 4'b0010 (normal non-cacheable)
   val arvalid  = Bool()                 //master is presenting a valid request
-  val arready = Bool()
 }
 
 //Master sends this to initiate a write transaction. Same handshake — awvalid/awready.
@@ -36,29 +35,26 @@ class AXI4_AW (params: AXIParams) extends Bundle{
   val awlock   = UInt(1.W)            //exclusive access flag, always 0 for you
   val awcache = UInt(4.W)            //cache hints, use 4'b0010 (normal non-cacheable)
   val awvalid  = Bool()                 //master is presenting a valid request
-  val awready = Bool()
 }
 
-//Slave responds with wready : Bool.
+//Slave responds with wready
 
 class AXI4_W (params: AXIParams) extends Bundle {
   val wdata  = UInt(params.AXI_WIDTH.W)        // data payload
   val wstrb   = UInt(params.AXI_WIDTH/8.W)     // byte enables, one bit per byte
   val wlast  =  Bool()                     // this is the final beat of the burst
   val wvalid = Bool()                      // data is valid this cycle
-  val wready = Bool()
 }
 
-//Master responds with bready : Bool — the reference hardwires this to 1.
+//Master responds with bready  — the reference hardwires this to 1.
 
 class AXI4_B (params: AXIParams ) extends Bundle {
   val bid    = UInt(params.xAXI_ID_LEN.W)   //matches the awid of the completed transaction
   val bresp  = UInt(2.W)            //OKAY=0, EXOKAY=1, SLVERR=2, DECERR=3
   val bvalid = Bool()                 //response is valid
-  val bready = Bool()
 }
 
-//Master responds with rready : Bool.
+//Master responds with rready
 
 class AXI4_R (params : AXIParams) extends Bundle {
   val rid    = UInt(params.xAXI_ID_LEN.W)   //matches the arid of the request
@@ -66,7 +62,6 @@ class AXI4_R (params : AXIParams) extends Bundle {
   val rresp  = UInt(2.W)            // OKAY=0, SLVERR=2, DECERR=3
   val rlast  = Bool()                 //this is the final beat of the burst
   val rvalid = Bool()                 //data is valid this cycle
-  val rready = Bool()
 }
 
 //ar, aw, w — master drives valid and data fields, slave drives ready.
@@ -77,10 +72,14 @@ class AXI4_R (params : AXIParams) extends Bundle {
 // These are flipped because the dominant direction goes slave - master.
 
 class AXI4Bundle(params: AXIParams) extends Bundle {
-  val ar = new AXI4_AR(params)
-  val aw = new AXI4_AW(params)
-  val w  = new AXI4_W(params)
-  val b  = Flipped(new AXI4_B(params))
-  val r  = Flipped(new AXI4_R(params))
+  val ar = Output(new AXI4_AR(params))
+  val aw = Output(new AXI4_AW(params))
+  val w  = Output(new AXI4_W(params))
+  val b  = Input(new AXI4_B(params))
+  val r  = Input(new AXI4_R(params))
+  val arready = Input(Bool())
+  val awready = Input(Bool())
+  val wready  = Input(Bool())
+  val bready  = Output(Bool())
+  val rready  = Output(Bool())
 }
-

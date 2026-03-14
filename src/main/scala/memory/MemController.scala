@@ -34,3 +34,4 @@ class MemController_Res extends Bundle {
   val ready = Bool()
   val done = Bool()
 }
+
