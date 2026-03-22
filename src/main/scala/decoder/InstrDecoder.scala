@@ -4,15 +4,14 @@ import branch_pred.IS_UOp
 import chisel3._
 import chisel3.util._
 import decoder.{D_UOp, DecodeBranch, DecodeState, OpcodeConst}
-import fetch.iFetchParams
-import fetch.PD_Instr
+import fetch.{IFetchFault, PD_Instr, iFetchParams}
 
 
 class InstrDecoder(params: iFetchParams) extends Module {
   val io = IO(new Bundle {
-    val in = Input(new PD_Instr) // from fetch.ifetchutil
+    val in = Input(new PD_Instr)
     val decState = Input(new DecodeState)
-    val inBranch = Input(new DecodeBranch) // from previous slot
+    val inBranch = Input(new DecodeBranch)
     val out = Output(new D_UOp)
     val outBranch = Output(new DecodeBranch)
   })
@@ -27,6 +26,9 @@ class InstrDecoder(params: iFetchParams) extends Module {
   val opcode = instr(6, 0) // 7-bit opcode field
   val funct3 = instr(14, 12)
   val funct7 = instr(31, 25)
+  // upper 5 bits instr(31,27) are funct5 which identifies the atomic operation
+  // and bits instr(26,25) are the aq (acquire) and rl (release)
+  val funct5 = instr(31,27)
   val rs1 = instr(19, 15)
   val rs2 = instr(24, 20)
   val rd = instr(11, 7)
@@ -56,6 +58,30 @@ class InstrDecoder(params: iFetchParams) extends Module {
   ))
 
   uop.imm12 := instr(31, 20)
+
+  // If the fetch unit detected a fault while fetching this instruction, the instruction bits themselves are meaningless.
+  // You do not decode them at all. Instead you convert the fault directly into a trap micro-op.
+
+  //Do not set decBranch here — the fetch unit already knows about the fault and has stopped fetching.
+  // The trap handler will redirect the PC.
+
+  when(io.in.fault =/= IFetchFault.IF_FAULT_NONE) {
+    uop.fu        := FU_t.FU_TRAP
+    uop.compressed := io.in.compressed
+    invalidEnc    := false.B
+
+    switch(io.in.fault) {
+      is(IFetchFault.IF_INTERRUPT) {
+        uop.opcode := TRAP_Op.TRAP_V_INTERRUPT.asUInt
+      }
+      is(IFetchFault.IF_ACCESS_FAULT) {
+        uop.opcode := TRAP_Op.TRAP_I_ACC_FAULT.asUInt
+      }
+      is(IFetchFault.IF_PAGE_FAULT) {
+        uop.opcode := TRAP_Op.TRAP_I_PAGE_FAULT.asUInt
+      }
+    }
+  }
 
   switch(opcode) {
 
@@ -225,5 +251,365 @@ class InstrDecoder(params: iFetchParams) extends Module {
         uop.fu := FU_t.FU_RN
       }
     }
+
+    is (OpcodeConst.OPC_REG_REG) {
+      uop.rs1 := rs1
+      uop.rs2 := rs2
+      uop.immB := false.B
+      uop.rd := rd
+      uop.fu := FU_t.FU_INT
+
+      switch(funct7) {
+        is(0.U) {
+          switch(funct3) {
+            is(0.U) {
+              uop.opcode := INT_Op.INT_ADD.asUInt; invalidEnc := false.B
+            }
+            is(1.U) {
+              uop.opcode := INT_Op.INT_SLL.asUInt; invalidEnc := false.B
+            }
+            is(2.U) {
+              uop.opcode := INT_Op.INT_SLT.asUInt; invalidEnc := false.B
+            }
+            is(3.U) {
+              uop.opcode := INT_Op.INT_SLTU.asUInt; invalidEnc := false.B
+            }
+            is(4.U) {
+              uop.opcode := INT_Op.INT_XOR.asUInt; invalidEnc := false.B
+            }
+            is(5.U) {
+              uop.opcode := INT_Op.INT_SRL.asUInt; invalidEnc := false.B
+            }
+            is(6.U) {
+              uop.opcode := INT_Op.INT_OR.asUInt; invalidEnc := false.B
+            }
+            is(7.U) {
+              uop.opcode := INT_Op.INT_AND.asUInt; invalidEnc := false.B
+            }
+          }
+        }
+
+        is(0x20.U) {
+          switch(funct3) {
+            is(0.U) {
+              uop.opcode := INT_Op.INT_SUB.asUInt; invalidEnc := false.B
+            }
+            is(5.U) {
+              uop.opcode := INT_Op.INT_SRA.asUInt; invalidEnc := false.B
+            }
+          }
+        }
+
+        is(1.U) {
+          // M extension — multiply and divide
+          // funct3 < 4 → multiply, funct3 >= 4 → divide
+          uop.rs1 := rs1
+          uop.rs2 := rs2
+          uop.rd := rd
+          uop.immB := false.B
+
+          when(funct3 < 4.U) {
+            uop.fu := FU_t.FU_MUL
+            switch(funct3) {
+              is(0.U) {
+                uop.opcode := MUL_Op.MUL_MUL.asUInt; invalidEnc := false.B
+              }
+              is(1.U) {
+                uop.opcode := MUL_Op.MUL_MULH.asUInt; invalidEnc := false.B
+              }
+              is(2.U) {
+                uop.opcode := MUL_Op.MUL_MULSU.asUInt; invalidEnc := false.B
+              }
+              is(3.U) {
+                uop.opcode := MUL_Op.MUL_MULU.asUInt; invalidEnc := false.B
+              }
+            }
+          }.otherwise {
+            uop.fu := FU_t.FU_DIV
+            switch(funct3) {
+              is(4.U) {
+                uop.opcode := DIV_Op.DIV_DIV.asUInt; invalidEnc := false.B
+              }
+              is(5.U) {
+                uop.opcode := DIV_Op.DIV_DIVU.asUInt; invalidEnc := false.B
+              }
+              is(6.U) {
+                uop.opcode := DIV_Op.DIV_REM.asUInt; invalidEnc := false.B
+              }
+              is(7.U) {
+                uop.opcode := DIV_Op.DIV_REMU.asUInt; invalidEnc := false.B
+              }
+              invalidEnc := true.B //handled later
+            }
+          }
+        }
+      }
+
+    is(OpcodeConst.OPC_FENCE) {
+      switch(funct3) {
+        is(0.U) {
+          uop.fu     := FU_t.FU_RN
+          invalidEnc := false.B
+        }
+        is(1.U) {
+          // FENCE.I — serializing, must drain pipeline and flush ICache
+          uop.fu        := FU_t.FU_INT
+          uop.opcode    := INT_Op.INT_SYS.asUInt
+          invalidEnc    := false.B
+          decBranch.taken    := true.B
+          decBranch.wfi      := true.B
+          decBranch.fetchID  := uop.fetchID
+          decBranch.fetchOffs := uop.fetchOffs
+        }
+      }
+    }
+
+    def takeBranch() = {
+      decBranch.taken     := true.B
+      decBranch.wfi       := true.B
+      decBranch.fetchID   := uop.fetchID
+      decBranch.fetchOffs := uop.fetchOffs
+    }
+
+    is (OpcodeConst.OPC_ENV) {
+      switch (funct3) {
+        is (0.U) {
+          when (instr(31 , 20) === 0.U  && rs1 === 0.U && rd === 0.U) {
+            uop.fu := FU_t.FU_TRAP
+            uop.opcode := TRAP_Op.TRAP_ECALL_M.asUInt // transfers control to the OS or hypervisor
+            uop.immB := true.B
+            uop.rs1 := 0.U
+            uop.rs2 := 0.U
+            uop.rd := 0.U
+            decBranch.taken := true.B
+            decBranch.wfi := true.B
+            decBranch.fetchID := uop.fetchID
+            decBranch.fetchOffs := uop.fetchOffs
+            invalidEnc := false.B
+          }
+
+          when (instr(31 , 20) === 1.U && rs1 === 0.U && rd === 0.U) {
+            uop.fu := FU_t.FU_TRAP
+            uop.opcode := TRAP_Op.TRAP_BREAK.asUInt // transfers control to a debugger
+            uop.rs1 := 0.U
+            uop.rs2 := 0.U
+            uop.rd := 0.U
+            decBranch.taken := true.B
+            decBranch.wfi := true.B
+            decBranch.fetchID := uop.fetchID
+            decBranch.fetchOffs := uop.fetchOffs
+            invalidEnc := false.B
+          }
+
+          when (funct7 === 0x18.U  && rs2 === 2.U && rs1 === 0.U && rd === 0.U ){
+            uop.fu := FU_t.FU_CSR
+            //. Returns from a machine-mode trap handler back to the interrupted code.
+            // It restores pc from mepc and privilege level from mstatus
+            uop.opcode := CSR_Op.CSR_MRET.asUInt
+            decBranch.taken := true.B
+            decBranch.wfi := true.B
+            decBranch.fetchID := uop.fetchID
+            decBranch.fetchOffs := uop.fetchOffs
+            invalidEnc := false.B
+          }
+
+          // both of these do not take any input registers (rs1 and rs2) they only manipulate CSR
+
+          when (funct7 === 0x08.U && rs2 === 2.U && rs1 === 0.U && rd === 0.U){
+            uop.fu := FU_t.FU_CSR
+            //Supervisor Return. Same concept as MRET but returns from supervisor-mode traps
+            uop.opcode := CSR_Op.CSR_SRET.asUInt
+            decBranch.taken := true.B
+            decBranch.wfi := true.B
+            decBranch.fetchID := uop.fetchID
+            decBranch.fetchOffs := uop.fetchOffs
+            invalidEnc := false.B
+          }
+
+          when (funct7 === 0x08.U && rs2 === 5.U && rs1 === 0.U && rd === 0.U){
+            //Wait For Interrupt. Hints to the processor to stop executing and wait until an interrupt arrives
+            when (io.decState.allowWFI === true.B) {
+              uop.fu := FU_t.FU_RN
+              decBranch.taken := true.B
+              decBranch.wfi := true.B
+              decBranch.fetchID := uop.fetchID
+              decBranch.fetchOffs := uop.fetchOffs
+              invalidEnc := false.B
+            }
+          }
+
+          when (funct7 === 0x09.U && rd === 0.U) {
+            //Supervisor Fence Virtual Memory Address.
+            // Flushes TLB entries. Required after modifying page tables so the hardware TLB reflects the new mappings
+            uop.rs1 := rs1
+            uop.rs2 := rs2
+            uop.fu := FU_t.FU_TRAP
+
+            when (io.decState.allowSFENCE === true.B){
+              uop.opcode := TRAP_Op.TRAP_V_SFENCE_VMA.asUInt
+            }.otherwise{
+              uop.opcode := TRAP_Op.TRAP_ILLEGAL_INSTR
+            }
+            decBranch.taken := true.B
+            decBranch.wfi := true.B
+            decBranch.fetchID := uop.fetchID
+            decBranch.fetchOffs := uop.fetchOffs
+            invalidEnc := false.B
+          }
+        }
+
+        is (1.U) {uop.fu := FU_t.FU_CSR ; uop.opcode := CSR_Op.CSR_RW.asUInt ; uop.rs1 := rs1 ; uop.rd := rd ; uop.imm := instr(31 , 20) ; invalidEnc := false.B}
+        is (2.U) {
+          uop.fu := FU_t.FU_CSR
+          uop.rs1 := rs1
+          uop.rd := rd
+
+          when (rs1 === 0.U) {
+            uop.opcode := CSR_Op.CSR_R.asUInt
+          }.otherwise{
+            uop.opcode := CSR_Op.CSR_RS.asUInt
+          }
+
+          invalidEnc := false.B
+        }
+
+        is (3.U) {
+          uop.fu := FU_t.FU_CSR
+          uop.rs1 := rs1
+          uop.rd := rd
+
+          when (rs1 === 0.U) {
+            uop.opcode := CSR_Op.CSR_R.asUInt
+          }.otherwise{
+            uop.opcode := CSR_Op.CSR_RC.asUInt
+          }
+
+          invalidEnc := false.B
+        }
+
+        is (5.U) {
+          //atomically reads the current value of a CSR register into rd, then writes a new value into that CSR.
+          // uses the imm field to read/write and not a GPR
+          uop.fu := FU_t.FU_CSR
+          uop.rd := rd
+          uop.opcode := CSR_Op.CSR_RW_I.asUInt
+          uop.imm := Cat(instr(19,15), instr(31,20))
+          invalidEnc := false.B
+        }
+
+        is (6.U) {
+          uop.fu := FU_t.FU_CSR
+          uop.rd := rd
+
+          when (rs1 === 0.U) {
+            uop.opcode := CSR_Op.CSR_R.asUInt
+          }.otherwise{
+            uop.opcode := CSR_Op.CSR_RS_I.asUInt
+          }
+
+          invalidEnc := false.B
+        }
+
+        is (7.U ) {
+          uop.fu := FU_t.FU_CSR
+          uop.rd := rd
+
+          when (rs1 === 0.U) {
+            uop.opcode := CSR_Op.CSR_R.asUInt
+          }.otherwise{
+            uop.opcode := CSR_Op.CSR_RC_I.asUInt
+          }
+          invalidEnc := false.B
+        }
+      }
+    }
+  }
+
+    is(OpcodeConst.OPC_ATOMIC) {
+      // funct3 must be 010 for 32-bit word operations
+      // any other funct3 is reserved — invalidEnc stays true
+      when(funct3 === 2.U) {
+        uop.rs1 := rs1
+        uop.rs2 := rs2
+        uop.rd  := rd
+
+        switch(funct5) {
+          is("b00010".U) {
+            // LR.W — load reserved, rs2 must be zero
+            when(rs2 === 0.U) {
+              uop.fu     := FU_t.FU_AGU
+              uop.opcode := LSU_Op.LSU_LR_W.asUInt
+              uop.rs2    := 0.U
+              uop.immB   := false.B
+              invalidEnc := false.B
+            }
+          }
+          is("b00011".U) {
+            // SC.W — store conditional
+            uop.fu     := FU_t.FU_AGU
+            uop.opcode := LSU_Op.LSU_SC_W.asUInt
+            uop.immB   := true.B
+            invalidEnc := false.B
+          }
+          is("b00001".U) {
+            uop.fu     := FU_t.FU_ATOMIC
+            uop.opcode := ATOMIC_Op.ATOMIC_AMOSWAP_W.asUInt
+            invalidEnc := false.B
+          }
+          is("b00000".U) {
+            uop.fu     := FU_t.FU_ATOMIC
+            uop.opcode := ATOMIC_Op.ATOMIC_AMOADD_W.asUInt
+            invalidEnc := false.B
+          }
+          is("b00100".U) {
+            uop.fu     := FU_t.FU_ATOMIC
+            uop.opcode := ATOMIC_Op.ATOMIC_AMOXOR_W.asUInt
+            invalidEnc := false.B
+          }
+          is("b01100".U) {
+            uop.fu     := FU_t.FU_ATOMIC
+            uop.opcode := ATOMIC_Op.ATOMIC_AMOAND_W.asUInt
+            invalidEnc := false.B
+          }
+          is("b01000".U) {
+            uop.fu     := FU_t.FU_ATOMIC
+            uop.opcode := ATOMIC_Op.ATOMIC_AMOOR_W.asUInt
+            invalidEnc := false.B
+          }
+          is("b10000".U) {
+            uop.fu     := FU_t.FU_ATOMIC
+            uop.opcode := ATOMIC_Op.ATOMIC_AMOMIN_W.asUInt
+            invalidEnc := false.B
+          }
+          is("b10100".U) {
+            uop.fu     := FU_t.FU_ATOMIC
+            uop.opcode := ATOMIC_Op.ATOMIC_AMOMAX_W.asUInt
+            invalidEnc := false.B
+          }
+          is("b11000".U) {
+            uop.fu     := FU_t.FU_ATOMIC
+            uop.opcode := ATOMIC_Op.ATOMIC_AMOMINU_W.asUInt
+            invalidEnc := false.B
+          }
+          is("b11100".U) {
+            uop.fu     := FU_t.FU_ATOMIC
+            uop.opcode := ATOMIC_Op.ATOMIC_AMOMAXU_W.asUInt
+            invalidEnc := false.B
+          }
+        }
+      }
+    }
+  }
+
+  //The pipeline needs to drain and take the illegal instruction trap before anything else executes.
+  // After opcode switch — catch-all for unrecognized encodings
+  when(invalidEnc) {
+    uop.fu     := FU_t.FU_TRAP
+    uop.opcode := TRAP_Op.TRAP_ILLEGAL_INSTR.asUInt
+    uop.rd     := 0.U
+    decBranch.taken     := true.B
+    decBranch.wfi       := true.B
+    decBranch.fetchID   := uop.fetchID
+    decBranch.fetchOffs := uop.fetchOffs
   }
 }

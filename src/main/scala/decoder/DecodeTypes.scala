@@ -5,10 +5,9 @@ import chisel3.util._
 import fetch.{FetchID, FetchOff}
 import branch_pred.SqN
 
-// ---------------------------------------------------------------------------
 // RISC-V 7-bit opcode constants
 // Used to match against instr(6,0) in the decode switch
-// ---------------------------------------------------------------------------
+
 object OpcodeConst {
   val OPC_LUI     = "b0110111".U(7.W)
   val OPC_AUIPC   = "b0010111".U(7.W)
@@ -24,10 +23,8 @@ object OpcodeConst {
   val OPC_ATOMIC  = "b0101111".U(7.W)
 }
 
-// ---------------------------------------------------------------------------
 // Functional Unit enum
 // Identifies which execution unit handles a given micro-op
-// ---------------------------------------------------------------------------
 object FU_t extends ChiselEnum {
   val FU_RN,      // rename only — NOP, eliminated before issue
       FU_INT,     // integer ALU
@@ -41,11 +38,9 @@ object FU_t extends ChiselEnum {
       = Value
 }
 
-// ---------------------------------------------------------------------------
 // Per-FU opcode enums
 // Each FU has its own opcode space. D_UOp stores opcode as UInt(7.W)
 // and the issue queue casts to the appropriate enum based on fu field.
-// ---------------------------------------------------------------------------
 
 object INT_Op extends ChiselEnum {
   val INT_ADD,    // add / addi
@@ -145,13 +140,12 @@ object TRAP_Op extends ChiselEnum {
       = Value
 }
 
-// ---------------------------------------------------------------------------
 // D_UOp — decoded micro-op
 //
 // Produced by the decoder, consumed by the issue queue.
 // opcode is stored as UInt(7.W) — wide enough for all per-FU enums.
 // The issue queue casts to the correct enum type based on the fu field.
-// ---------------------------------------------------------------------------
+
 class D_UOp extends Bundle {
   val valid      = Bool()
   val fu         = FU_t()
@@ -168,27 +162,25 @@ class D_UOp extends Bundle {
   val compressed = Bool()         // was originally a 16-bit C instruction
 }
 
-// ---------------------------------------------------------------------------
 // DecodeBranch
 //
 // Signals a serializing event within the current decode group.
 // Once taken, all subsequent instructions in the group are invalidated.
 // wfi is set for any instruction that must drain the pipeline before
 // fetch can continue (branches, traps, WFI, MRET, SRET, FENCE.I etc.)
-// ---------------------------------------------------------------------------
 class DecodeBranch extends Bundle {
   val taken     = Bool()
   val fetchID   = new FetchID
   val fetchOffs = new FetchOff
   val wfi       = Bool()
+  val pc  = UInt(32.W)
 }
 
-// ---------------------------------------------------------------------------
 // DecodeState
 //
 // Privilege-level control signals passed into the decoder from the CSR module.
 // Gate certain instructions based on current privilege level.
-// ---------------------------------------------------------------------------
+
 class DecodeState extends Bundle {
   val allowWFI      = Bool()   // WFI permitted at current privilege level
   val allowSFENCE   = Bool()   // SFENCE.VMA permitted
