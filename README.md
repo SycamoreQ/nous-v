@@ -1,11 +1,15 @@
 Quasar is a RISC-V based Neural Processing Unit in Chisel. 
 
-Currently working on the Branch Prediction for the host CPU.
 TODO: 
-- Write the MemController and then the Dcache.
+- Write the ROB and Rename mechanism for proper OoO 
+- work deeper on the mem model i.e SRAM , DCache
 
-CURRENTLY WORKING ON : 
-- CacheWriteInterface , and then connecting all the memory components to the MemController and then the SRAM
-- DCache
+Whats Done- 
+
+- Full fetch frontend — ICache, TLB, BranchPredictor, IFetchPipeline, InstrAligner, iFetch
+- PageWalker, MemArbiter, MemController 
+- CacheReadInterface - 
+- AXI4 bundles, Transfer, MemCBundles - light mem model work 
+- DecodeTypes, InstrDecoder, Decoder basically the entire decoding step 
 
 Look into this paper for FlashAttn : https://www.together.ai/blog/flashattention-4
